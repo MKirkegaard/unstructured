@@ -176,6 +176,10 @@ class DescribeChunkingOptions:
         ):
             ChunkingOptions(max_tokens=100)._validate()
 
+    def it_rejects_empty_string_tokenizer_when_using_max_tokens(self):
+        with pytest.raises(ValueError):
+            ChunkingOptions(max_tokens=100, tokenizer="")._validate()
+
     @pytest.mark.parametrize("max_tokens", [0, -1, -42])
     def it_rejects_max_tokens_not_greater_than_zero(self, max_tokens: int):
         with pytest.raises(

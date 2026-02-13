@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import collections
 import copy
-from typing import Any, Callable, DefaultDict, Iterable, Iterator, cast
+from typing import Any, Callable, DefaultDict, Iterable, Iterator, Union, cast
 
 import regex
-from typing_extensions import Self, TypeAlias
+from typing_extensions import Protocol, Self, TypeAlias, runtime_checkable
 
 from unstructured.common.html_table import HtmlCell, HtmlRow, HtmlTable
 from unstructured.documents.elements import (
@@ -47,14 +47,28 @@ BoundaryPredicate: TypeAlias = Callable[[Element], bool]
 TextAndHtml: TypeAlias = tuple[str, str]
 
 
+@runtime_checkable
+class TokenCounterLike(Protocol):
+    """Protocol for token counters used in token-based chunking.
+
+    Any object that implements a `count(str) -> int` method can be used as a token counter.
+    This allows plugging in custom tokenizers (e.g. sentence-transformers, HuggingFace tokenizers)
+    in addition to the built-in tiktoken support.
+    """
+
+    def count(self, text: str) -> int:
+        """Return the number of tokens in `text`."""
+        ...
+
+
 class TokenCounter:
     """Token counting using tiktoken for token-based chunking.
 
     Lazily imports tiktoken only when token counting is first used.
     """
 
-    def __init__(self, tokenizer: str):
-        self._tokenizer_name = tokenizer
+    def __init__(self, tokenizer_name: str):
+        self._tokenizer_name = tokenizer_name
 
     @lazyproperty
     def _encoder(self):
@@ -71,6 +85,82 @@ class TokenCounter:
     def count(self, text: str) -> int:
         """Return the number of tokens in `text`."""
         return len(self._encoder.encode(text))
+
+
+# -- Type alias for the `tokenizer` parameter: a string (tiktoken model/encoding name),
+# -- a callable that maps text to token count, or an object implementing the TokenCounterLike
+# -- protocol.
+TokenizerType = Union[str, TokenCounterLike, Callable[[str], int]]
+
+
+class _CallableTokenCounter:
+    """Adapter that wraps a `Callable[[str], int]` to satisfy the `TokenCounter` protocol."""
+
+    def __init__(self, fn: Callable[[str], int]):
+        self._fn = fn
+
+    def count(self, text: str) -> int:
+        return self._fn(text)
+
+
+def _resolve_token_counter(tokenizer: TokenizerType) -> TokenCounterLike:
+    """Resolve a `tokenizer` argument into a `TokenCounter` instance.
+
+    - `str` -> `TokenCounter` (tiktoken model or encoding name)
+    - `Callable[[str], int]` -> wrapped in `_CallableTokenCounter`
+    - `TokenCounter`-compatible object (has `.count(str) -> int`) -> used directly
+
+    Raises `ValueError` if the tokenizer cannot be resolved or is not accessible.
+    """
+    if isinstance(tokenizer, str):
+        return _resolve_tiktoken(tokenizer)
+    if callable(tokenizer) and not isinstance(tokenizer, TokenCounterLike):
+        counter = _CallableTokenCounter(tokenizer)
+        _validate_token_counter_accessible(counter)
+        return counter
+    # -- at this point, tokenizer should be a TokenCounterLike-compatible object --
+    _validate_token_counter_accessible(tokenizer)
+    return tokenizer
+
+
+def _resolve_tiktoken(tokenizer_name: str) -> TokenCounter:
+    """Create a `TokenCounter` and verify that tiktoken is installed and the name is valid."""
+    try:
+        import tiktoken  # noqa: F401
+    except ImportError:
+        raise ValueError(
+            f"tiktoken is required for string-based tokenizer '{tokenizer_name}' but is not"
+            f" installed. Install it with `pip install tiktoken`, or pass a custom tokenizer"
+            f" object/callable instead."
+        )
+
+    counter = TokenCounter(tokenizer_name)
+    # -- eagerly validate that the tokenizer name is recognized --
+    try:
+        counter._encoder  # triggers lazy initialization
+    except Exception as e:
+        raise ValueError(
+            f"tiktoken tokenizer '{tokenizer_name}' is not recognized as a model name or"
+            f" encoding name. Available encodings can be listed with"
+            f" `tiktoken.list_encoding_names()`. Error: {e}"
+        )
+    return counter
+
+
+def _validate_token_counter_accessible(counter: TokenCounterLike) -> None:
+    """Verify a custom token counter is functional by running a quick test."""
+    try:
+        result = counter.count("test")
+        if not isinstance(result, int):
+            raise TypeError(
+                f"tokenizer.count() must return an int, got {type(result).__name__}"
+            )
+    except TypeError:
+        raise
+    except Exception as e:
+        raise ValueError(
+            f"tokenizer is not accessible or failed during validation: {e}"
+        )
 
 
 # ================================================================================================
@@ -127,8 +217,10 @@ class ChunkingOptions:
         of last-resort. Note that because the separator is removed during text-splitting, only
         whitespace character sequences are suitable.
     tokenizer
-        The tokenizer to use for token-based chunking. Can be either an encoding name (e.g.,
-        "cl100k_base") or a model name (e.g., "gpt-4"). Required when using `max_tokens`.
+        The tokenizer to use for token-based chunking. Can be a string (tiktoken encoding name
+        like "cl100k_base" or model name like "gpt-4"), an object with a `count(str) -> int`
+        method, or a callable `(str) -> int` that returns the token count. Required when using
+        `max_tokens`.
     """
 
     def __init__(self, **kwargs: Any):
@@ -265,10 +357,12 @@ class ChunkingOptions:
         )
 
     @lazyproperty
-    def token_counter(self) -> TokenCounter | None:
+    def token_counter(self) -> TokenCounterLike | None:
         """The token counter for token-based chunking, or None for character-based chunking."""
         tokenizer = self._kwargs.get("tokenizer")
-        return TokenCounter(tokenizer) if tokenizer else None
+        if tokenizer is None:
+            return None
+        return _resolve_token_counter(tokenizer)
 
     @lazyproperty
     def use_token_counting(self) -> bool:
@@ -301,6 +395,11 @@ class ChunkingOptions:
         # -- max_tokens must be positive --
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError(f"'max_tokens' argument must be > 0, got {max_tokens}")
+
+        # -- eagerly validate tokenizer accessibility only for token-based chunking --
+        if max_tokens is not None and tokenizer is not None:
+            # -- accessing token_counter triggers _resolve_token_counter which validates --
+            self.token_counter
 
         # -- new_after_n_tokens requires max_tokens --
         new_after_n_tokens = self._kwargs.get("new_after_n_tokens")

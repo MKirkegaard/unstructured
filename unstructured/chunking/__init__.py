@@ -5,7 +5,12 @@ Publishes the public aspects of the chunking sub-package interface.
 
 from __future__ import annotations
 
-from unstructured.chunking.base import CHUNK_MAX_CHARS_DEFAULT, CHUNK_MULTI_PAGE_DEFAULT
+from unstructured.chunking.base import (
+    CHUNK_MAX_CHARS_DEFAULT,
+    CHUNK_MULTI_PAGE_DEFAULT,
+    TokenCounter,
+    TokenizerType,
+)
 from unstructured.chunking.dispatch import (
     Chunker,
     add_chunking_strategy,
@@ -15,6 +20,8 @@ from unstructured.chunking.dispatch import (
 __all__ = [
     "CHUNK_MAX_CHARS_DEFAULT",
     "CHUNK_MULTI_PAGE_DEFAULT",
+    "TokenCounter",
+    "TokenizerType",
     "add_chunking_strategy",
     # -- these must be published to allow pluggable chunkers in other code-bases --
     "Chunker",

@@ -13,6 +13,7 @@ from unstructured.chunking.base import (
     ChunkingOptions,
     PreChunkCombiner,
     PreChunker,
+    TokenizerType,
     is_on_next_page,
     is_title,
 )
@@ -32,7 +33,7 @@ def chunk_by_title(
     new_after_n_tokens: Optional[int] = None,
     overlap: Optional[int] = None,
     overlap_all: Optional[bool] = None,
-    tokenizer: Optional[str] = None,
+    tokenizer: Optional[TokenizerType] = None,
 ) -> list[Element]:
     """Uses title elements to identify sections within the document for chunking.
 
@@ -81,8 +82,10 @@ def chunk_by_title(
         elements and not subject to text-splitting. Use this with caution as it entails a certain
         level of "pollution" of otherwise clean semantic chunk boundaries.
     tokenizer
-        The tokenizer to use for token-based chunking. Can be either an encoding name (e.g.,
-        "cl100k_base") or a model name (e.g., "gpt-4"). Required when using `max_tokens`.
+        The tokenizer to use for token-based chunking. Can be a string (tiktoken encoding name
+        like "cl100k_base" or model name like "gpt-4"), an object with a `count(str) -> int`
+        method, or a callable `(str) -> int` that returns the token count. Required when using
+        `max_tokens`.
     """
     opts = _ByTitleChunkingOptions.new(
         combine_text_under_n_chars=combine_text_under_n_chars,

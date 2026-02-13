@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from unstructured.chunking.base import ChunkingOptions, PreChunker
+from unstructured.chunking.base import ChunkingOptions, PreChunker, TokenizerType
 from unstructured.documents.elements import Element
 
 
@@ -31,7 +31,7 @@ def chunk_elements(
     new_after_n_tokens: Optional[int] = None,
     overlap: Optional[int] = None,
     overlap_all: Optional[bool] = None,
-    tokenizer: Optional[str] = None,
+    tokenizer: Optional[TokenizerType] = None,
 ) -> list[Element]:
     """Combine sequential `elements` into chunks, respecting specified text-length limits.
 
@@ -74,8 +74,10 @@ def chunk_elements(
         elements and not subject to text-splitting. Use this with caution as it produces a certain
         level of "pollution" of otherwise clean semantic chunk boundaries.
     tokenizer
-        The tokenizer to use for token-based chunking. Can be either an encoding name (e.g.,
-        "cl100k_base") or a model name (e.g., "gpt-4"). Required when using `max_tokens`.
+        The tokenizer to use for token-based chunking. Can be a string (tiktoken encoding name
+        like "cl100k_base" or model name like "gpt-4"), an object with a `count(str) -> int`
+        method, or a callable `(str) -> int` that returns the token count. Required when using
+        `max_tokens`.
     """
     # -- raises ValueError on invalid parameters --
     opts = _BasicChunkingOptions.new(
