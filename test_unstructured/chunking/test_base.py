@@ -273,6 +273,68 @@ class DescribeTokenCounter:
 
 
 # ================================================================================================
+# CUSTOM TOKENIZERS
+# ================================================================================================
+
+
+class DescribeCustomTokenizers:
+    """Unit-test suite for custom tokenizer inputs in token-based chunking mode."""
+
+    def it_accepts_a_callable_tokenizer(self):
+        def count_words(text: str) -> int:
+            return len(text.split())
+
+        opts = ChunkingOptions(max_tokens=3, tokenizer=count_words)
+        opts._validate()
+
+        assert opts.measure("one two three") == 3
+        assert opts.measure("one two three four") == 4
+
+    def it_accepts_an_object_with_count_method(self):
+        class LocalCounter:
+            def count(self, text: str) -> int:
+                return len(text.split())
+
+        opts = ChunkingOptions(max_tokens=3, tokenizer=LocalCounter())
+        opts._validate()
+
+        assert opts.measure("one two three") == 3
+
+    def it_accepts_a_huggingface_style_local_tokenizer_wrapper(self):
+        class FakeHFTokenizer:
+            def encode(self, text: str):
+                # -- mimics local HF tokenizer behavior by returning token ids --
+                return [tok for tok in text.split() if tok]
+
+        class HFLocalModelCounter:
+            def __init__(self):
+                self._tokenizer = FakeHFTokenizer()
+
+            def count(self, text: str) -> int:
+                return len(self._tokenizer.encode(text))
+
+        opts = ChunkingOptions(max_tokens=4, tokenizer=HFLocalModelCounter())
+        opts._validate()
+
+        assert opts.measure("local e5 strict tokenizer") == 4
+
+    def it_rejects_callable_tokenizer_that_returns_non_int(self):
+        def bad_counter(_: str):
+            return "4"
+
+        with pytest.raises(TypeError, match="must return an int"):
+            ChunkingOptions(max_tokens=10, tokenizer=bad_counter)._validate()
+
+    def it_rejects_tokenizer_object_that_raises(self):
+        class BrokenCounter:
+            def count(self, _: str) -> int:
+                raise RuntimeError("model unavailable")
+
+        with pytest.raises(ValueError, match="not accessible"):
+            ChunkingOptions(max_tokens=10, tokenizer=BrokenCounter())._validate()
+
+
+# ================================================================================================
 # TEXT SPLITTER (TOKEN MODE)
 # ================================================================================================
 
